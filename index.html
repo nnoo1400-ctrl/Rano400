@@ -1,0 +1,660 @@
+
+
+import { useState, useEffect, useCallback } from 'react';
+import { supabase, type TransferIn, type TransferOut, type ElearningStudent } from './lib/supabase';
+import { UserPlus, UserMinus, Search, Plus, Trash2, CreditCard as Edit2, X, Save, GraduationCap, ChevronDown, FileText, Calendar, School, AlertCircle, Monitor } from 'lucide-react';
+
+const GRADES = ['الأول الثانوي', 'الثاني الثانوي', 'الثالث الثانوي'];
+const SECTIONS = ['أ', 'ب', 'ج', 'د', 'هـ', 'و'];
+
+type Tab = 'transfers_in' | 'transfers_out' | 'elearning';
+
+const emptyTransferIn = (): Omit<TransferIn, 'id' | 'created_at'> => ({
+  student_name: '', national_id: '', grade: '', section: '',
+  from_school: '', transfer_date: '', start_date: '', notes: '',
+});
+
+const emptyTransferOut = (): Omit<TransferOut, 'id' | 'created_at'> => ({
+  student_name: '', national_id: '', grade: '', section: '',
+  to_school: '', transfer_date: '', notes: '',
+});
+
+const emptyElearning = (): Omit<ElearningStudent, 'id' | 'created_at'> => ({
+  student_name: '', national_id: '', grade: '', section: '',
+  transfer_date: '', notes: '',
+});
+
+export default function App() {
+  const [tab, setTab] = useState<Tab>('transfers_in');
+  const [transfersIn, setTransfersIn] = useState<TransferIn[]>([]);
+  const [transfersOut, setTransfersOut] = useState<TransferOut[]>([]);
+  const [elearning, setElearning] = useState<ElearningStudent[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
+  const [gradeFilter, setGradeFilter] = useState('');
+  const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [formIn, setFormIn] = useState(emptyTransferIn());
+  const [formOut, setFormOut] = useState(emptyTransferOut());
+  const [formEl, setFormEl] = useState(emptyElearning());
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+
+  const fetchData = useCallback(async () => {
+    setLoading(true);
+    const [{ data: inData }, { data: outData }, { data: elData }] = await Promise.all([
+      supabase.from('transfers_in').select('*').order('transfer_date', { ascending: false }),
+      supabase.from('transfers_out').select('*').order('transfer_date', { ascending: false }),
+      supabase.from('elearning_students').select('*').order('transfer_date', { ascending: false }),
+    ]);
+    setTransfersIn(inData ?? []);
+    setTransfersOut(outData ?? []);
+    setElearning(elData ?? []);
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { fetchData(); }, [fetchData]);
+
+  const filtered = {
+    transfers_in: transfersIn.filter((r) => {
+      const q = search.toLowerCase();
+      return (!q || r.student_name.includes(q) || r.national_id.includes(q) || r.from_school.includes(q))
+        && (!gradeFilter || r.grade === gradeFilter);
+    }),
+    transfers_out: transfersOut.filter((r) => {
+      const q = search.toLowerCase();
+      return (!q || r.student_name.includes(q) || r.national_id.includes(q) || r.to_school.includes(q))
+        && (!gradeFilter || r.grade === gradeFilter);
+    }),
+    elearning: elearning.filter((r) => {
+      const q = search.toLowerCase();
+      return (!q || r.student_name.includes(q) || r.national_id.includes(q))
+        && (!gradeFilter || r.grade === gradeFilter);
+    }),
+  };
+
+  const openAddForm = () => {
+    setEditingId(null);
+    setFormIn(emptyTransferIn());
+    setFormOut(emptyTransferOut());
+    setFormEl(emptyElearning());
+    setError('');
+    setShowForm(true);
+  };
+
+  const openEditForm = (record: TransferIn | TransferOut | ElearningStudent) => {
+    setEditingId(record.id);
+    setError('');
+    if (tab === 'transfers_in') setFormIn(record as TransferIn);
+    else if (tab === 'transfers_out') setFormOut(record as TransferOut);
+    else setFormEl(record as ElearningStudent);
+    setShowForm(true);
+  };
+
+  const validate = () => {
+    if (tab === 'transfers_in') {
+      if (!formIn.student_name.trim()) return 'اسم الطالبة مطلوب';
+      if (!formIn.national_id.trim()) return 'رقم الهوية مطلوب';
+      if (!formIn.grade) return 'المرحلة الدراسية مطلوبة';
+      if (!formIn.from_school.trim()) return 'المدرسة المنقولة منها مطلوبة';
+      if (!formIn.transfer_date) return 'تاريخ النقل مطلوب';
+      if (!formIn.start_date) return 'تاريخ المباشرة مطلوب';
+    } else if (tab === 'transfers_out') {
+      if (!formOut.student_name.trim()) return 'اسم الطالبة مطلوب';
+      if (!formOut.national_id.trim()) return 'رقم الهوية مطلوب';
+      if (!formOut.grade) return 'المرحلة الدراسية مطلوبة';
+      if (!formOut.to_school.trim()) return 'المدرسة المنقولة إليها مطلوبة';
+      if (!formOut.transfer_date) return 'تاريخ النقل مطلوب';
+    } else {
+      if (!formEl.student_name.trim()) return 'اسم الطالبة مطلوب';
+      if (!formEl.national_id.trim()) return 'رقم الهوية مطلوب';
+      if (!formEl.grade) return 'المرحلة الدراسية مطلوبة';
+      if (!formEl.transfer_date) return 'تاريخ التحويل مطلوب';
+    }
+    return '';
+  };
+
+  const handleSave = async () => {
+    const err = validate();
+    if (err) { setError(err); return; }
+    setSaving(true);
+    setError('');
+
+    if (tab === 'transfers_in') {
+      const { id, created_at, ...payload } = formIn as TransferIn;
+      if (editingId) await supabase.from('transfers_in').update(payload).eq('id', editingId);
+      else await supabase.from('transfers_in').insert(payload);
+    } else if (tab === 'transfers_out') {
+      const { id, created_at, ...payload } = formOut as TransferOut;
+      if (editingId) await supabase.from('transfers_out').update(payload).eq('id', editingId);
+      else await supabase.from('transfers_out').insert(payload);
+    } else {
+      const { id, created_at, ...payload } = formEl as ElearningStudent;
+      if (editingId) await supabase.from('elearning_students').update(payload).eq('id', editingId);
+      else await supabase.from('elearning_students').insert(payload);
+    }
+
+    setSaving(false);
+    setShowForm(false);
+    fetchData();
+  };
+
+  const handleDelete = async (id: string) => {
+    const table = tab === 'transfers_in' ? 'transfers_in' : tab === 'transfers_out' ? 'transfers_out' : 'elearning_students';
+    await supabase.from(table).delete().eq('id', id);
+    setDeleteConfirm(null);
+    fetchData();
+  };
+
+  const fmt = (d: string) => {
+    if (!d) return '-';
+    const [y, m, day] = d.split('-');
+    return `${day}/${m}/${y}`;
+  };
+
+  const tabConfig = {
+    transfers_in: { label: 'منقولات إلى المدرسة', icon: UserPlus, color: 'emerald', count: transfersIn.length },
+    transfers_out: { label: 'منقولات من المدرسة', icon: UserMinus, color: 'rose', count: transfersOut.length },
+    elearning: { label: 'التعليم الإلكتروني', icon: Monitor, color: 'sky', count: elearning.length },
+  };
+
+  const activeRows = filtered[tab];
+
+  return (
+    <div dir="rtl" className="min-h-screen font-sans" style={{ background: 'linear-gradient(160deg, #e8f4fd 0%, #f0f7ff 40%, #e2eef9 70%, #d6e8f5 100%)' }}>
+
+      {/* Decorative wave background */}
+      <div className="fixed inset-0 pointer-events-none overflow-hidden" style={{ zIndex: 0 }}>
+        <svg className="absolute bottom-0 left-0 w-full" viewBox="0 0 1440 320" preserveAspectRatio="none" style={{ height: '35vh' }}>
+          <path fill="rgba(186,224,255,0.35)" d="M0,192L60,186.7C120,181,240,171,360,181.3C480,192,600,224,720,224C840,224,960,192,1080,181.3C1200,171,1320,181,1380,186.7L1440,192L1440,320L1380,320C1320,320,1200,320,1080,320C960,320,840,320,720,320C600,320,480,320,360,320C240,320,120,320,60,320L0,320Z" />
+        </svg>
+        <svg className="absolute bottom-0 left-0 w-full" viewBox="0 0 1440 320" preserveAspectRatio="none" style={{ height: '25vh' }}>
+          <path fill="rgba(147,205,255,0.25)" d="M0,256L48,245.3C96,235,192,213,288,213.3C384,213,480,235,576,240C672,245,768,235,864,218.7C960,203,1056,181,1152,181.3C1248,181,1344,203,1392,213.3L1440,224L1440,320L1392,320C1344,320,1248,320,1152,320C1056,320,960,320,864,320C768,320,672,320,576,320C480,320,384,320,288,320C192,320,96,320,48,320L0,320Z" />
+        </svg>
+        <svg className="absolute top-0 right-0 w-1/2 opacity-20" viewBox="0 0 600 400">
+          <circle cx="500" cy="80" r="220" fill="rgba(56,152,220,0.15)" />
+          <circle cx="400" cy="200" r="140" fill="rgba(96,176,232,0.12)" />
+        </svg>
+      </div>
+
+      <div className="relative" style={{ zIndex: 1 }}>
+        {/* Header with logo image */}
+        <header className="relative overflow-hidden" style={{ background: 'linear-gradient(135deg, #0a4f8c 0%, #1170b8 50%, #1a8fd1 100%)' }}>
+          {/* Inner wave decoration */}
+          <svg className="absolute bottom-0 left-0 w-full" viewBox="0 0 1440 60" preserveAspectRatio="none" style={{ height: '30px' }}>
+            <path fill="rgba(232,244,253,0.95)" d="M0,30L80,26C160,22,320,14,480,18C640,22,800,38,960,42C1120,46,1280,38,1360,34L1440,30L1440,60L1360,60C1280,60,1120,60,960,60C800,60,640,60,480,60C320,60,160,60,80,60L0,60Z" />
+          </svg>
+          {/* Subtle circles */}
+          <div className="absolute top-[-40px] left-[-40px] w-64 h-64 rounded-full opacity-10" style={{ background: 'radial-gradient(circle, #fff 0%, transparent 70%)' }} />
+          <div className="absolute bottom-[-20px] right-20 w-40 h-40 rounded-full opacity-10" style={{ background: 'radial-gradient(circle, #7dd3fc 0%, transparent 70%)' }} />
+
+          <div className="relative max-w-5xl mx-auto px-4 pt-6 pb-10 flex flex-col items-center text-center gap-4">
+            <img
+              src="https://i.ibb.co/tMJM2hZM/image.png"
+              alt="شعار المدرسة"
+              className="h-28 object-contain drop-shadow-lg"
+              onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+            />
+            <div>
+              <h1 className="text-2xl font-extrabold text-white leading-snug tracking-wide">
+                سجل التسجيل والقبول
+              </h1>
+              <p className="text-sky-200 text-sm mt-1 font-medium">
+                الثانوية الثالثة بالخبر &nbsp;|&nbsp; قسم الشؤون الطلابية
+              </p>
+            </div>
+          </div>
+        </header>
+
+        <div className="max-w-6xl mx-auto px-4 py-7 space-y-6">
+          {/* Stats cards */}
+          <div className="grid grid-cols-3 gap-4">
+            {(Object.entries(tabConfig) as [Tab, typeof tabConfig[Tab]][]).map(([key, cfg]) => {
+              const Icon = cfg.icon;
+              const colorMap: Record<string, string> = {
+                emerald: 'from-emerald-400 to-emerald-600',
+                rose: 'from-rose-400 to-rose-600',
+                sky: 'from-sky-400 to-sky-600',
+              };
+              const bgMap: Record<string, string> = {
+                emerald: 'bg-emerald-50 border-emerald-100',
+                rose: 'bg-rose-50 border-rose-100',
+                sky: 'bg-sky-50 border-sky-100',
+              };
+              const textMap: Record<string, string> = {
+                emerald: 'text-emerald-700',
+                rose: 'text-rose-600',
+                sky: 'text-sky-700',
+              };
+              return (
+                <button
+                  key={key}
+                  onClick={() => { setTab(key); setSearch(''); setGradeFilter(''); }}
+                  className={`rounded-2xl border shadow-sm p-4 flex flex-col items-center gap-2 transition-all ${bgMap[cfg.color]} ${tab === key ? 'ring-2 ring-offset-1 ring-sky-400 shadow-md' : 'hover:shadow-md'}`}
+                >
+                  <div className={`bg-gradient-to-br ${colorMap[cfg.color]} rounded-xl p-2.5 shadow`}>
+                    <Icon className="w-5 h-5 text-white" />
+                  </div>
+                  <span className={`text-2xl font-extrabold ${textMap[cfg.color]}`}>{cfg.count}</span>
+                  <span className="text-xs text-slate-500 font-medium text-center leading-tight">{cfg.label}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Main card */}
+          <div className="bg-white/90 backdrop-blur-sm rounded-3xl shadow-lg border border-white/60 overflow-hidden">
+            {/* Tabs */}
+            <div className="flex border-b border-slate-100 bg-slate-50/60">
+              {(Object.entries(tabConfig) as [Tab, typeof tabConfig[Tab]][]).map(([key, cfg]) => {
+                const Icon = cfg.icon;
+                const activeColor: Record<string, string> = {
+                  emerald: 'text-emerald-700 border-emerald-500 bg-white',
+                  rose: 'text-rose-600 border-rose-500 bg-white',
+                  sky: 'text-sky-700 border-sky-500 bg-white',
+                };
+                return (
+                  <button
+                    key={key}
+                    onClick={() => { setTab(key); setSearch(''); setGradeFilter(''); }}
+                    className={`flex-1 flex items-center justify-center gap-2 py-3.5 text-sm font-semibold border-b-2 transition-all ${
+                      tab === key ? activeColor[cfg.color] : 'border-transparent text-slate-500 hover:text-slate-700 hover:bg-white/50'
+                    }`}
+                  >
+                    <Icon className="w-4 h-4" />
+                    <span className="hidden sm:inline">{cfg.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Toolbar */}
+            <div className="p-4 flex flex-col sm:flex-row gap-3 border-b border-slate-100">
+              <div className="relative flex-1">
+                <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder="بحث باسم الطالبة أو رقم الهوية..."
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  className="w-full pr-10 pl-4 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-300 bg-slate-50"
+                />
+              </div>
+              <div className="relative">
+                <select
+                  value={gradeFilter}
+                  onChange={(e) => setGradeFilter(e.target.value)}
+                  className="appearance-none pr-4 pl-8 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-300 bg-slate-50 text-slate-700"
+                >
+                  <option value="">كل المراحل</option>
+                  {GRADES.map((g) => <option key={g} value={g}>{g}</option>)}
+                </select>
+                <ChevronDown className="absolute left-2 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+              </div>
+              <button
+                onClick={openAddForm}
+                className="flex items-center gap-2 bg-gradient-to-l from-sky-600 to-sky-700 hover:from-sky-500 hover:to-sky-600 text-white px-5 py-2.5 rounded-xl text-sm font-semibold transition-all shadow"
+              >
+                <Plus className="w-4 h-4" />
+                إضافة سجل
+              </button>
+            </div>
+
+            {/* Table area */}
+            <div className="overflow-x-auto">
+              {loading ? (
+                <div className="py-20 text-center">
+                  <div className="inline-block w-8 h-8 border-4 border-sky-200 border-t-sky-500 rounded-full animate-spin" />
+                  <p className="text-slate-400 text-sm mt-3">جارٍ تحميل البيانات...</p>
+                </div>
+              ) : activeRows.length === 0 ? (
+                <EmptyState />
+              ) : tab === 'transfers_in' ? (
+                <TransferInTable rows={filtered.transfers_in} fmt={fmt} onEdit={openEditForm} onDelete={setDeleteConfirm} />
+              ) : tab === 'transfers_out' ? (
+                <TransferOutTable rows={filtered.transfers_out} fmt={fmt} onEdit={openEditForm} onDelete={setDeleteConfirm} />
+              ) : (
+                <ElearningTable rows={filtered.elearning} fmt={fmt} onEdit={openEditForm} onDelete={setDeleteConfirm} />
+              )}
+            </div>
+
+            {!loading && (
+              <div className="px-5 py-3 border-t border-slate-100 text-xs text-slate-400 text-left">
+                {activeRows.length} سجل
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Modal Form */}
+      {showForm && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg max-h-[92vh] overflow-y-auto border border-slate-100">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+              <div className="flex items-center gap-3">
+                <div className="bg-gradient-to-br from-sky-400 to-sky-600 rounded-xl p-2 shadow">
+                  {tab === 'transfers_in' ? <UserPlus className="w-5 h-5 text-white" />
+                    : tab === 'transfers_out' ? <UserMinus className="w-5 h-5 text-white" />
+                    : <Monitor className="w-5 h-5 text-white" />}
+                </div>
+                <h2 className="font-bold text-slate-800">
+                  {editingId ? 'تعديل السجل' : (
+                    tab === 'transfers_in' ? 'إضافة منقولة إلى المدرسة'
+                    : tab === 'transfers_out' ? 'إضافة منقولة من المدرسة'
+                    : 'إضافة طالبة تعليم إلكتروني'
+                  )}
+                </h2>
+              </div>
+              <button onClick={() => setShowForm(false)} className="p-2 rounded-xl hover:bg-slate-100 text-slate-500 transition-colors">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="px-6 py-5 space-y-4">
+              {error && (
+                <div className="flex items-center gap-2 bg-rose-50 border border-rose-200 text-rose-700 text-sm px-4 py-3 rounded-xl">
+                  <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                  {error}
+                </div>
+              )}
+
+              {tab === 'transfers_in' && (
+                <TransferInForm form={formIn} setForm={setFormIn} />
+              )}
+              {tab === 'transfers_out' && (
+                <TransferOutForm form={formOut} setForm={setFormOut} />
+              )}
+              {tab === 'elearning' && (
+                <ElearningForm form={formEl} setForm={setFormEl} />
+              )}
+            </div>
+
+            <div className="px-6 py-4 border-t border-slate-100 flex gap-3 justify-end">
+              <button onClick={() => setShowForm(false)} className="px-5 py-2.5 rounded-xl border border-slate-200 text-slate-600 text-sm font-medium hover:bg-slate-50 transition-colors">
+                إلغاء
+              </button>
+              <button
+                onClick={handleSave}
+                disabled={saving}
+                className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-l from-sky-600 to-sky-700 hover:from-sky-500 hover:to-sky-600 text-white text-sm font-semibold transition-all disabled:opacity-60 shadow"
+              >
+                <Save className="w-4 h-4" />
+                {saving ? 'جارٍ الحفظ...' : 'حفظ'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirm */}
+      {deleteConfirm && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl shadow-2xl p-6 max-w-sm w-full text-center space-y-4">
+            <div className="bg-rose-100 w-14 h-14 rounded-full flex items-center justify-center mx-auto">
+              <Trash2 className="w-6 h-6 text-rose-500" />
+            </div>
+            <div>
+              <h3 className="font-bold text-slate-800 text-lg">تأكيد الحذف</h3>
+              <p className="text-slate-500 text-sm mt-1">هل أنتِ متأكدة من حذف هذا السجل؟ لا يمكن التراجع عن هذا الإجراء.</p>
+            </div>
+            <div className="flex gap-3">
+              <button onClick={() => setDeleteConfirm(null)} className="flex-1 px-4 py-2.5 rounded-xl border border-slate-200 text-slate-600 text-sm font-medium hover:bg-slate-50 transition-colors">
+                إلغاء
+              </button>
+              <button onClick={() => handleDelete(deleteConfirm)} className="flex-1 px-4 py-2.5 rounded-xl bg-rose-500 hover:bg-rose-600 text-white text-sm font-semibold transition-colors">
+                حذف
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Shared helpers ───────────────────────────────────────────────
+
+const inputClass = 'w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-300 bg-slate-50 text-slate-800 placeholder-slate-400';
+
+function Field({ label, required, icon, children }: { label: string; required?: boolean; icon?: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <div>
+      <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-600 mb-1.5">
+        {icon && <span className="text-slate-400">{icon}</span>}
+        {label}
+        {required && <span className="text-rose-500">*</span>}
+      </label>
+      {children}
+    </div>
+  );
+}
+
+function GradeSection({ grade, setGrade, section, setSection }: { grade: string; setGrade: (v: string) => void; section: string; setSection: (v: string) => void }) {
+  return (
+    <div className="grid grid-cols-2 gap-3">
+      <Field label="المرحلة الدراسية" required icon={<GraduationCap className="w-4 h-4" />}>
+        <select value={grade} onChange={(e) => setGrade(e.target.value)} className={inputClass}>
+          <option value="">اختر المرحلة</option>
+          {GRADES.map((g) => <option key={g} value={g}>{g}</option>)}
+        </select>
+      </Field>
+      <Field label="الفصل" icon={<FileText className="w-4 h-4" />}>
+        <select value={section} onChange={(e) => setSection(e.target.value)} className={inputClass}>
+          <option value="">اختياري</option>
+          {SECTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
+        </select>
+      </Field>
+    </div>
+  );
+}
+
+// ── Forms ────────────────────────────────────────────────────────
+
+function TransferInForm({ form, setForm }: { form: Omit<TransferIn, 'id' | 'created_at'>; setForm: (f: Omit<TransferIn, 'id' | 'created_at'>) => void }) {
+  return (
+    <>
+      <Field label="اسم الطالبة" required icon={<FileText className="w-4 h-4" />}>
+        <input type="text" value={form.student_name} onChange={(e) => setForm({ ...form, student_name: e.target.value })} placeholder="الاسم الكامل" className={inputClass} />
+      </Field>
+      <Field label="رقم الهوية" required icon={<FileText className="w-4 h-4" />}>
+        <input type="text" value={form.national_id} onChange={(e) => setForm({ ...form, national_id: e.target.value })} placeholder="رقم الهوية الوطنية" className={inputClass} dir="ltr" />
+      </Field>
+      <GradeSection grade={form.grade} setGrade={(v) => setForm({ ...form, grade: v })} section={form.section} setSection={(v) => setForm({ ...form, section: v })} />
+      <Field label="المدرسة المنقولة منها" required icon={<School className="w-4 h-4" />}>
+        <input type="text" value={form.from_school} onChange={(e) => setForm({ ...form, from_school: e.target.value })} placeholder="اسم المدرسة" className={inputClass} />
+      </Field>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="تاريخ النقل" required icon={<Calendar className="w-4 h-4" />}>
+          <input type="date" value={form.transfer_date} onChange={(e) => setForm({ ...form, transfer_date: e.target.value })} className={inputClass} dir="ltr" />
+        </Field>
+        <Field label="تاريخ المباشرة" required icon={<Calendar className="w-4 h-4" />}>
+          <input type="date" value={form.start_date} onChange={(e) => setForm({ ...form, start_date: e.target.value })} className={inputClass} dir="ltr" />
+        </Field>
+      </div>
+      <Field label="ملاحظات" icon={<FileText className="w-4 h-4" />}>
+        <textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="ملاحظات إضافية (اختياري)" rows={2} className={inputClass + ' resize-none'} />
+      </Field>
+    </>
+  );
+}
+
+function TransferOutForm({ form, setForm }: { form: Omit<TransferOut, 'id' | 'created_at'>; setForm: (f: Omit<TransferOut, 'id' | 'created_at'>) => void }) {
+  return (
+    <>
+      <Field label="اسم الطالبة" required icon={<FileText className="w-4 h-4" />}>
+        <input type="text" value={form.student_name} onChange={(e) => setForm({ ...form, student_name: e.target.value })} placeholder="الاسم الكامل" className={inputClass} />
+      </Field>
+      <Field label="رقم الهوية" required icon={<FileText className="w-4 h-4" />}>
+        <input type="text" value={form.national_id} onChange={(e) => setForm({ ...form, national_id: e.target.value })} placeholder="رقم الهوية الوطنية" className={inputClass} dir="ltr" />
+      </Field>
+      <GradeSection grade={form.grade} setGrade={(v) => setForm({ ...form, grade: v })} section={form.section} setSection={(v) => setForm({ ...form, section: v })} />
+      <Field label="المدرسة المنقولة إليها" required icon={<School className="w-4 h-4" />}>
+        <input type="text" value={form.to_school} onChange={(e) => setForm({ ...form, to_school: e.target.value })} placeholder="اسم المدرسة" className={inputClass} />
+      </Field>
+      <Field label="تاريخ النقل" required icon={<Calendar className="w-4 h-4" />}>
+        <input type="date" value={form.transfer_date} onChange={(e) => setForm({ ...form, transfer_date: e.target.value })} className={inputClass} dir="ltr" />
+      </Field>
+      <Field label="ملاحظات" icon={<FileText className="w-4 h-4" />}>
+        <textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="ملاحظات إضافية (اختياري)" rows={2} className={inputClass + ' resize-none'} />
+      </Field>
+    </>
+  );
+}
+
+function ElearningForm({ form, setForm }: { form: Omit<ElearningStudent, 'id' | 'created_at'>; setForm: (f: Omit<ElearningStudent, 'id' | 'created_at'>) => void }) {
+  return (
+    <>
+      <Field label="اسم الطالبة" required icon={<FileText className="w-4 h-4" />}>
+        <input type="text" value={form.student_name} onChange={(e) => setForm({ ...form, student_name: e.target.value })} placeholder="الاسم الكامل" className={inputClass} />
+      </Field>
+      <Field label="رقم الهوية" required icon={<FileText className="w-4 h-4" />}>
+        <input type="text" value={form.national_id} onChange={(e) => setForm({ ...form, national_id: e.target.value })} placeholder="رقم الهوية الوطنية" className={inputClass} dir="ltr" />
+      </Field>
+      <GradeSection grade={form.grade} setGrade={(v) => setForm({ ...form, grade: v })} section={form.section} setSection={(v) => setForm({ ...form, section: v })} />
+      <Field label="تاريخ التحويل للتعليم الإلكتروني" required icon={<Calendar className="w-4 h-4" />}>
+        <input type="date" value={form.transfer_date} onChange={(e) => setForm({ ...form, transfer_date: e.target.value })} className={inputClass} dir="ltr" />
+      </Field>
+      <Field label="ملاحظات" icon={<FileText className="w-4 h-4" />}>
+        <textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="ملاحظات إضافية (اختياري)" rows={2} className={inputClass + ' resize-none'} />
+      </Field>
+    </>
+  );
+}
+
+// ── Tables ───────────────────────────────────────────────────────
+
+function ActionCell({ id, onEdit, onDelete, record }: { id: string; onEdit: (r: TransferIn | TransferOut | ElearningStudent) => void; onDelete: (id: string) => void; record: TransferIn | TransferOut | ElearningStudent }) {
+  return (
+    <div className="flex items-center justify-center gap-1.5">
+      <button onClick={() => onEdit(record)} className="p-1.5 rounded-lg hover:bg-sky-100 text-sky-600 transition-colors" title="تعديل">
+        <Edit2 className="w-3.5 h-3.5" />
+      </button>
+      <button onClick={() => onDelete(id)} className="p-1.5 rounded-lg hover:bg-rose-100 text-rose-500 transition-colors" title="حذف">
+        <Trash2 className="w-3.5 h-3.5" />
+      </button>
+    </div>
+  );
+}
+
+function GradeBadge({ grade, section, color }: { grade: string; section: string; color: string }) {
+  const cls: Record<string, string> = {
+    emerald: 'bg-emerald-100 text-emerald-700',
+    rose: 'bg-rose-100 text-rose-700',
+    sky: 'bg-sky-100 text-sky-700',
+  };
+  return (
+    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${cls[color]}`}>
+      {grade}{section ? ` / ${section}` : ''}
+    </span>
+  );
+}
+
+const thClass = 'px-4 py-3 text-right font-semibold text-xs text-slate-500 uppercase tracking-wide';
+const tdClass = 'px-4 py-3 text-sm';
+
+function TransferInTable({ rows, fmt, onEdit, onDelete }: { rows: TransferIn[]; fmt: (d: string) => string; onEdit: (r: TransferIn | TransferOut | ElearningStudent) => void; onDelete: (id: string) => void }) {
+  return (
+    <table className="w-full">
+      <thead><tr className="bg-emerald-50/60 border-b border-emerald-100">
+        <th className={thClass}>#</th>
+        <th className={thClass}>اسم الطالبة</th>
+        <th className={thClass}>رقم الهوية</th>
+        <th className={thClass}>المرحلة</th>
+        <th className={thClass}>المدرسة المنقولة منها</th>
+        <th className={thClass}>تاريخ النقل</th>
+        <th className={thClass}>تاريخ المباشرة</th>
+        <th className={thClass}>ملاحظات</th>
+        <th className="px-4 py-3 text-center text-xs text-slate-500 font-semibold uppercase">إجراءات</th>
+      </tr></thead>
+      <tbody className="divide-y divide-slate-50">
+        {rows.map((r, i) => (
+          <tr key={r.id} className="hover:bg-emerald-50/30 transition-colors">
+            <td className={tdClass + ' text-slate-400'}>{i + 1}</td>
+            <td className={tdClass + ' font-semibold text-slate-800'}>{r.student_name}</td>
+            <td className={tdClass + ' text-slate-500 font-mono text-xs'}>{r.national_id}</td>
+            <td className={tdClass}><GradeBadge grade={r.grade} section={r.section} color="emerald" /></td>
+            <td className={tdClass + ' text-slate-600'}>{r.from_school}</td>
+            <td className={tdClass + ' text-slate-500 whitespace-nowrap'}>{fmt(r.transfer_date)}</td>
+            <td className={tdClass + ' text-slate-500 whitespace-nowrap'}>{fmt(r.start_date)}</td>
+            <td className={tdClass + ' text-slate-400 max-w-32 truncate'}>{r.notes || '-'}</td>
+            <td className={tdClass}><ActionCell id={r.id} record={r} onEdit={onEdit} onDelete={onDelete} /></td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function TransferOutTable({ rows, fmt, onEdit, onDelete }: { rows: TransferOut[]; fmt: (d: string) => string; onEdit: (r: TransferIn | TransferOut | ElearningStudent) => void; onDelete: (id: string) => void }) {
+  return (
+    <table className="w-full">
+      <thead><tr className="bg-rose-50/60 border-b border-rose-100">
+        <th className={thClass}>#</th>
+        <th className={thClass}>اسم الطالبة</th>
+        <th className={thClass}>رقم الهوية</th>
+        <th className={thClass}>المرحلة</th>
+        <th className={thClass}>المدرسة المنقولة إليها</th>
+        <th className={thClass}>تاريخ النقل</th>
+        <th className={thClass}>ملاحظات</th>
+        <th className="px-4 py-3 text-center text-xs text-slate-500 font-semibold uppercase">إجراءات</th>
+      </tr></thead>
+      <tbody className="divide-y divide-slate-50">
+        {rows.map((r, i) => (
+          <tr key={r.id} className="hover:bg-rose-50/30 transition-colors">
+            <td className={tdClass + ' text-slate-400'}>{i + 1}</td>
+            <td className={tdClass + ' font-semibold text-slate-800'}>{r.student_name}</td>
+            <td className={tdClass + ' text-slate-500 font-mono text-xs'}>{r.national_id}</td>
+            <td className={tdClass}><GradeBadge grade={r.grade} section={r.section} color="rose" /></td>
+            <td className={tdClass + ' text-slate-600'}>{r.to_school}</td>
+            <td className={tdClass + ' text-slate-500 whitespace-nowrap'}>{fmt(r.transfer_date)}</td>
+            <td className={tdClass + ' text-slate-400 max-w-32 truncate'}>{r.notes || '-'}</td>
+            <td className={tdClass}><ActionCell id={r.id} record={r} onEdit={onEdit} onDelete={onDelete} /></td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function ElearningTable({ rows, fmt, onEdit, onDelete }: { rows: ElearningStudent[]; fmt: (d: string) => string; onEdit: (r: TransferIn | TransferOut | ElearningStudent) => void; onDelete: (id: string) => void }) {
+  return (
+    <table className="w-full">
+      <thead><tr className="bg-sky-50/60 border-b border-sky-100">
+        <th className={thClass}>#</th>
+        <th className={thClass}>اسم الطالبة</th>
+        <th className={thClass}>رقم الهوية</th>
+        <th className={thClass}>المرحلة</th>
+        <th className={thClass}>تاريخ التحويل</th>
+        <th className={thClass}>ملاحظات</th>
+        <th className="px-4 py-3 text-center text-xs text-slate-500 font-semibold uppercase">إجراءات</th>
+      </tr></thead>
+      <tbody className="divide-y divide-slate-50">
+        {rows.map((r, i) => (
+          <tr key={r.id} className="hover:bg-sky-50/30 transition-colors">
+            <td className={tdClass + ' text-slate-400'}>{i + 1}</td>
+            <td className={tdClass + ' font-semibold text-slate-800'}>{r.student_name}</td>
+            <td className={tdClass + ' text-slate-500 font-mono text-xs'}>{r.national_id}</td>
+            <td className={tdClass}><GradeBadge grade={r.grade} section={r.section} color="sky" /></td>
+            <td className={tdClass + ' text-slate-500 whitespace-nowrap'}>{fmt(r.transfer_date)}</td>
+            <td className={tdClass + ' text-slate-400 max-w-32 truncate'}>{r.notes || '-'}</td>
+            <td className={tdClass}><ActionCell id={r.id} record={r} onEdit={onEdit} onDelete={onDelete} /></td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function EmptyState() {
+  return (
+    <div className="py-16 text-center">
+      <div className="bg-slate-100 w-14 h-14 rounded-full flex items-center justify-center mx-auto mb-3">
+        <FileText className="w-6 h-6 text-slate-400" />
+      </div>
+      <p className="text-slate-500 text-sm">لا توجد سجلات بعد</p>
+      <p className="text-slate-400 text-xs mt-1">اضغطي على "إضافة سجل" للبدء</p>
+    </div>
+  );
+}
